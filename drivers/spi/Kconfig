@@ -633,6 +633,12 @@ config SPI_SUN6I
 	help
 	  This enables using the SPI controller on the Allwinner A31 SoCs.
 
+config SPI_SUN50I
+	tristate "Allwinner A64 SPI controller"
+	depends on ARCH_SUNXI || COMPILE_TEST
+	help
+	  This enables using the SPI controller on the Allwinner A64 SoCs.
+
 config SPI_MXS
 	tristate "Freescale MXS SPI controller"
 	depends on ARCH_MXS

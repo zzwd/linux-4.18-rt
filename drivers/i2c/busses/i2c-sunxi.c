@@ -427,6 +427,14 @@ exit_clk:
 static int
 sunxi_i2c_remove(struct platform_device *dev)
 {
+	struct sunxi_i2c_data		*drv_data = platform_get_drvdata(dev);
+
+	i2c_del_adapter(&drv_data->adapter);
+	free_irq(drv_data->irq, drv_data);
+	reset_control_assert(drv_data->rstc);
+	clk_disable_unprepare(drv_data->reg_clk);
+	clk_disable_unprepare(drv_data->clk);
+
 	printk(KERN_EMERG "sunxi i2c remove success\n");
 	return 0;
 }
@@ -434,7 +442,9 @@ sunxi_i2c_remove(struct platform_device *dev)
 #ifdef CONFIG_PM
 static int sunxi_i2c_resume(struct device *dev)
 {
-	printk(KERN_EMERG "sunxi i2c resume success\n");
+	struct sunxi_i2c_data *drv_data = dev_get_drvdata(dev);
+
+	sunxi_i2c_hw_init(drv_data);
 	return 0;
 }
 

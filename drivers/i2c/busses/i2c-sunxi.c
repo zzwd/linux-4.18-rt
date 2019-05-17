@@ -151,7 +151,6 @@ struct sunxi_i2c_data {
 	
 	bool			errata_delay; 	/* 5us延迟以避免重复启动时序违规 */
 	struct reset_control	*rstc; 	/*i2c复位控制*/
-	bool			irq_clear_inverted;
 };
 
 
@@ -194,23 +193,18 @@ sunxi_i2c_wait_for_completion(struct sunxi_i2c_data *drv_data)
 	unsigned long	flags;
 	char		abort = 0;
 
-	//printk(KERN_EMERG  "wait for completion  block = %d, timeout = %d\n", drv_data->block, drv_data->adapter.timeout);
-
 	/*等待i2c发送完成或超时退出*/
 	time_left = wait_event_timeout(drv_data->waitq,
 		!drv_data->block, drv_data->adapter.timeout);
 
 	/*上锁*/
 	spin_lock_irqsave(&drv_data->lock, flags);
-	//printk(KERN_EMERG  "spin_lock_irqsave lock\n");
 	if (!time_left) { /* time_left返回0，超时*/
 		drv_data->rc = -ETIMEDOUT;
 		abort = 1;
-		//printk(KERN_EMERG  "wait for completion timeout, adapter_timeout = %d, time_left = %ld\n",drv_data->adapter.timeout, time_left);
 	} else if (time_left < 0) { /* Interrupted/Error */
 		drv_data->rc = time_left; /* errno value */
 		abort = 1;
-		//printk(KERN_EMERG  "wait for completion  time_left = %ld\n", time_left);
 	}
 
 	if (abort && drv_data->block) {
@@ -220,7 +214,6 @@ sunxi_i2c_wait_for_completion(struct sunxi_i2c_data *drv_data)
 		time_left = wait_event_timeout(drv_data->waitq,
 			!drv_data->block, drv_data->adapter.timeout);
 
-		//printk(KERN_EMERG  "wait for completion  again time_left = %ld\n", time_left);
 
 		if ((time_left <= 0) && drv_data->block) {
 			drv_data->state = SUNXI_I2C_STATE_IDLE;
@@ -233,7 +226,6 @@ sunxi_i2c_wait_for_completion(struct sunxi_i2c_data *drv_data)
 		}
 	} else {
 		spin_unlock_irqrestore(&drv_data->lock, flags);
-		//printk(KERN_EMERG  "spin_lock_irqsave unlock\n");
 	}
 }
 
@@ -423,7 +415,7 @@ sunxi_i2c_do_action(struct sunxi_i2c_data *drv_data)
 			drv_data->action);
 		drv_data->rc = -EIO;
 
-		/* FALLTHRU */
+		/* 传输完成，设置i2c控制寄存器，关闭中断使能、停止主设备模式 */
 	case SUNXI_I2C_ACTION_SEND_STOP:
 		drv_data->cntl_bits &= ~SUNXI_I2C_REG_CONTROL_INTEN;
 		writel(drv_data->cntl_bits | SUNXI_I2C_REG_CONTROL_STOP,
@@ -570,10 +562,10 @@ sunxi_i2c_intr(int irq, void *dev_id)
 		sunxi_i2c_fsm(drv_data, status);
 		sunxi_i2c_do_action(drv_data);
 
-		if (drv_data->irq_clear_inverted) {
-			writel(drv_data->cntl_bits | SUNXI_I2C_REG_CONTROL_IFLG,
-			       drv_data->reg_base + drv_data->reg_offsets.control);
-		}
+		/*重新置位SUNXI_I2C_REG_CONTROL_IFLG，触发中断继续发送i2c消息，
+		当传输完成时会关闭中断使能，设置该标志位不会再触发中断*/
+		writel(drv_data->cntl_bits | SUNXI_I2C_REG_CONTROL_IFLG,
+		       drv_data->reg_base + drv_data->reg_offsets.control);
 
 		rc = IRQ_HANDLED;
 	}
@@ -687,15 +679,8 @@ sunxi_of_config(struct sunxi_i2c_data *drv_data,
 	/*初始化寄存器偏移地址，device->data是sunxi_i2c_of_match_table的data成员*/
 	memcpy(&drv_data->reg_offsets, device->data, sizeof(drv_data->reg_offsets));
 
-	/*
-	 * For controllers embedded in new SoCs activate the
-	 * Transaction Generator support and the errata fix.
-	 */
-	if (of_device_is_compatible(np, "allwinner,sun6i-a31-i2c"))
-		drv_data->irq_clear_inverted = true;
-
-out:
-	return rc;
+	out:
+		return rc;
 }
 #else /* CONFIG_OF */
 static int

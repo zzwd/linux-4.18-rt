@@ -17,78 +17,90 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/reset.h>
 
 #include <linux/spi/spi.h>
 
-#define SUN50I_FIFO_DEPTH		64
+#define SUN6I_FIFO_DEPTH		128
+#define SUN8I_FIFO_DEPTH		64
 
-#define SUN50I_RXDATA_REG		0x00
+#define SUN50I_GBL_CTL_REG		0x04
+#define SUN50I_GBL_CTL_BUS_ENABLE		BIT(0)
+#define SUN50I_GBL_CTL_MASTER			BIT(1)
+#define SUN50I_GBL_CTL_TP			BIT(7)
+#define SUN50I_GBL_CTL_RST			BIT(31)
 
-#define SUN50I_TXDATA_REG		0x04
+#define SUN50I_TFR_CTL_REG		0x08
+#define SUN50I_TFR_CTL_CPHA			BIT(0)
+#define SUN50I_TFR_CTL_CPOL			BIT(1)
+#define SUN50I_TFR_CTL_SPOL			BIT(2)
+#define SUN50I_TFR_CTL_CS_MASK			0x30
+#define SUN50I_TFR_CTL_CS(cs)			(((cs) << 4) & SUN50I_TFR_CTL_CS_MASK)
+#define SUN50I_TFR_CTL_CS_MANUAL			BIT(6)
+#define SUN50I_TFR_CTL_CS_LEVEL			BIT(7)
+#define SUN50I_TFR_CTL_DHB			BIT(8)
+#define SUN50I_TFR_CTL_FBS			BIT(12)
+#define SUN50I_TFR_CTL_XCH			BIT(31)
 
-#define SUN50I_CTL_REG			0x08
-#define SUN50I_CTL_ENABLE			BIT(0)
-#define SUN50I_CTL_MASTER			BIT(1)
-#define SUN50I_CTL_CPHA				BIT(2)
-#define SUN50I_CTL_CPOL				BIT(3)
-#define SUN50I_CTL_CS_ACTIVE_LOW			BIT(4)
-#define SUN50I_CTL_LMTF				BIT(6)
-#define SUN50I_CTL_TF_RST			BIT(8)
-#define SUN50I_CTL_RF_RST			BIT(9)
-#define SUN50I_CTL_XCH				BIT(10)
-#define SUN50I_CTL_CS_MASK			0x3000
-#define SUN50I_CTL_CS(cs)			(((cs) << 12) & SUN50I_CTL_CS_MASK)
-#define SUN50I_CTL_DHB				BIT(15)
-#define SUN50I_CTL_CS_MANUAL			BIT(16)
-#define SUN50I_CTL_CS_LEVEL			BIT(17)
-#define SUN50I_CTL_TP				BIT(18)
+#define SUN50I_INT_CTL_REG		0x10
+#define SUN50I_INT_CTL_RF_RDY			BIT(0)
+#define SUN50I_INT_CTL_TF_ERQ			BIT(4)
+#define SUN50I_INT_CTL_RF_OVF			BIT(8)
+#define SUN50I_INT_CTL_TC			BIT(12)
 
-#define SUN50I_INT_CTL_REG		0x0c
-#define SUN50I_INT_CTL_RF_F34			BIT(4)
-#define SUN50I_INT_CTL_TF_E34			BIT(12)
-#define SUN50I_INT_CTL_TC			BIT(16)
+#define SUN50I_INT_STA_REG		0x14
 
-#define SUN50I_INT_STA_REG		0x10
+#define SUN50I_FIFO_CTL_REG		0x18
+#define SUN50I_FIFO_CTL_RF_RDY_TRIG_LEVEL_MASK	0xff
+#define SUN50I_FIFO_CTL_RF_RDY_TRIG_LEVEL_BITS	0
+#define SUN50I_FIFO_CTL_RF_RST			BIT(15)
+#define SUN50I_FIFO_CTL_TF_ERQ_TRIG_LEVEL_MASK	0xff
+#define SUN50I_FIFO_CTL_TF_ERQ_TRIG_LEVEL_BITS	16
+#define SUN50I_FIFO_CTL_TF_RST			BIT(31)
 
-#define SUN50I_DMA_CTL_REG		0x14
-
-#define SUN50I_WAIT_REG			0x18
-
-#define SUN50I_CLK_CTL_REG		0x1c
-#define SUN50I_CLK_CTL_CDR2_MASK			0xff
-#define SUN50I_CLK_CTL_CDR2(div)			((div) & SUN50I_CLK_CTL_CDR2_MASK)
-#define SUN50I_CLK_CTL_CDR1_MASK			0xf
-#define SUN50I_CLK_CTL_CDR1(div)			(((div) & SUN50I_CLK_CTL_CDR1_MASK) << 8)
-#define SUN50I_CLK_CTL_DRS			BIT(12)
-
-#define SUN50I_MAX_XFER_SIZE			0xffffff
-
-#define SUN50I_BURST_CNT_REG		0x20
-#define SUN50I_BURST_CNT(cnt)			((cnt) & SUN50I_MAX_XFER_SIZE)
-
-#define SUN50I_XMIT_CNT_REG		0x24
-#define SUN50I_XMIT_CNT(cnt)			((cnt) & SUN50I_MAX_XFER_SIZE)
-
-
-#define SUN50I_FIFO_STA_REG		0x28
+#define SUN50I_FIFO_STA_REG		0x1c
 #define SUN50I_FIFO_STA_RF_CNT_MASK		0x7f
 #define SUN50I_FIFO_STA_RF_CNT_BITS		0
 #define SUN50I_FIFO_STA_TF_CNT_MASK		0x7f
 #define SUN50I_FIFO_STA_TF_CNT_BITS		16
+
+#define SUN50I_CLK_CTL_REG		0x24
+#define SUN50I_CLK_CTL_CDR2_MASK			0xff
+#define SUN50I_CLK_CTL_CDR2(div)			(((div) & SUN50I_CLK_CTL_CDR2_MASK) << 0)
+#define SUN50I_CLK_CTL_CDR1_MASK			0xf
+#define SUN50I_CLK_CTL_CDR1(div)			(((div) & SUN50I_CLK_CTL_CDR1_MASK) << 8)
+#define SUN50I_CLK_CTL_DRS			BIT(12)
+
+#define SUN50I_MAX_XFER_SIZE		0xffffff
+
+#define SUN50I_BURST_CNT_REG		0x30
+#define SUN50I_BURST_CNT(cnt)			((cnt) & SUN50I_MAX_XFER_SIZE)
+
+#define SUN50I_XMIT_CNT_REG		0x34
+#define SUN50I_XMIT_CNT(cnt)			((cnt) & SUN50I_MAX_XFER_SIZE)
+
+#define SUN50I_BURST_CTL_CNT_REG		0x38
+#define SUN50I_BURST_CTL_CNT_STC(cnt)		((cnt) & SUN50I_MAX_XFER_SIZE)
+
+#define SUN50I_TXDATA_REG		0x200
+#define SUN50I_RXDATA_REG		0x300
 
 struct sun50i_spi {
 	struct spi_master	*master;
 	void __iomem		*base_addr;
 	struct clk		*hclk;
 	struct clk		*mclk;
+	struct reset_control	*rstc;
 
 	struct completion	done;
 
 	const u8		*tx_buf;
 	u8			*rx_buf;
 	int			len;
+	unsigned long		fifo_depth;
 };
 
 static inline u32 sun50i_spi_read(struct sun50i_spi *sspi, u32 reg)
@@ -152,7 +164,7 @@ static inline void sun50i_spi_fill_fifo(struct sun50i_spi *sspi, int len)
 	u8 byte;
 
 	/* See how much data we can fit */
-	cnt = SUN50I_FIFO_DEPTH - sun50i_spi_get_tx_fifo_count(sspi);
+	cnt = sspi->fifo_depth - sun50i_spi_get_tx_fifo_count(sspi);
 
 	len = min3(len, (int)cnt, sspi->len);
 
@@ -168,41 +180,21 @@ static void sun50i_spi_set_cs(struct spi_device *spi, bool enable)
 	struct sun50i_spi *sspi = spi_master_get_devdata(spi->master);
 	u32 reg;
 
-	reg = sun50i_spi_read(sspi, SUN50I_CTL_REG);
-
-	reg &= ~SUN50I_CTL_CS_MASK;
-	reg |= SUN50I_CTL_CS(spi->chip_select);
-
-	/* We want to control the chip select manually */
-	reg |= SUN50I_CTL_CS_MANUAL;
+	reg = sun50i_spi_read(sspi, SUN50I_TFR_CTL_REG);
+	reg &= ~SUN50I_TFR_CTL_CS_MASK;
+	reg |= SUN50I_TFR_CTL_CS(spi->chip_select);
 
 	if (enable)
-		reg |= SUN50I_CTL_CS_LEVEL;
+		reg |= SUN50I_TFR_CTL_CS_LEVEL;
 	else
-		reg &= ~SUN50I_CTL_CS_LEVEL;
+		reg &= ~SUN50I_TFR_CTL_CS_LEVEL;
 
-	/*
-	 * Even though this looks irrelevant since we are supposed to
-	 * be controlling the chip select manually, this bit also
-	 * controls the levels of the chip select for inactive
-	 * devices.
-	 *
-	 * If we don't set it, the chip select level will go low by
-	 * default when the device is idle, which is not really
-	 * expected in the common case where the chip select is active
-	 * low.
-	 */
-	if (spi->mode & SPI_CS_HIGH)
-		reg &= ~SUN50I_CTL_CS_ACTIVE_LOW;
-	else
-		reg |= SUN50I_CTL_CS_ACTIVE_LOW;
-
-	sun50i_spi_write(sspi, SUN50I_CTL_REG, reg);
+	sun50i_spi_write(sspi, SUN50I_TFR_CTL_REG, reg);
 }
 
 static size_t sun50i_spi_max_transfer_size(struct spi_device *spi)
 {
-	return SUN50I_FIFO_DEPTH - 1;
+	return SUN50I_MAX_XFER_SIZE - 1;
 }
 
 static int sun50i_spi_transfer_one(struct spi_master *master,
@@ -212,16 +204,13 @@ static int sun50i_spi_transfer_one(struct spi_master *master,
 	struct sun50i_spi *sspi = spi_master_get_devdata(master);
 	unsigned int mclk_rate, div, timeout;
 	unsigned int start, end, tx_time;
+	unsigned int trig_level;
 	unsigned int tx_len = 0;
 	int ret = 0;
 	u32 reg;
 
-	/* We don't support transfer larger than the FIFO */
 	if (tfr->len > SUN50I_MAX_XFER_SIZE)
-		return -EMSGSIZE;
-
-	if (tfr->tx_buf && tfr->len >= SUN50I_MAX_XFER_SIZE)
-		return -EMSGSIZE;
+		return -EINVAL;
 
 	reinit_completion(&sspi->done);
 	sspi->tx_buf = tfr->tx_buf;
@@ -231,43 +220,55 @@ static int sun50i_spi_transfer_one(struct spi_master *master,
 	/* Clear pending interrupts */
 	sun50i_spi_write(sspi, SUN50I_INT_STA_REG, ~0);
 
+	/* Reset FIFO */
+	sun50i_spi_write(sspi, SUN50I_FIFO_CTL_REG,
+			SUN50I_FIFO_CTL_RF_RST | SUN50I_FIFO_CTL_TF_RST);
 
-	reg = sun50i_spi_read(sspi, SUN50I_CTL_REG);
-
-	/* Reset FIFOs */
-	sun50i_spi_write(sspi, SUN50I_CTL_REG,
-			reg | SUN50I_CTL_RF_RST | SUN50I_CTL_TF_RST);
+	/*
+	 * Setup FIFO interrupt trigger level
+	 * Here we choose 3/4 of the full fifo depth, as it's the hardcoded
+	 * value used in old generation of Allwinner SPI controller.
+	 * (See spi-sun4i.c)
+	 */
+	trig_level = sspi->fifo_depth / 4 * 3;
+	sun50i_spi_write(sspi, SUN50I_FIFO_CTL_REG,
+			(trig_level << SUN50I_FIFO_CTL_RF_RDY_TRIG_LEVEL_BITS) |
+			(trig_level << SUN50I_FIFO_CTL_TF_ERQ_TRIG_LEVEL_BITS));
 
 	/*
 	 * Setup the transfer control register: Chip Select,
 	 * polarities, etc.
 	 */
+	reg = sun50i_spi_read(sspi, SUN50I_TFR_CTL_REG);
+
 	if (spi->mode & SPI_CPOL)
-		reg |= SUN50I_CTL_CPOL;
+		reg |= SUN50I_TFR_CTL_CPOL;
 	else
-		reg &= ~SUN50I_CTL_CPOL;
+		reg &= ~SUN50I_TFR_CTL_CPOL;
 
 	if (spi->mode & SPI_CPHA)
-		reg |= SUN50I_CTL_CPHA;
+		reg |= SUN50I_TFR_CTL_CPHA;
 	else
-		reg &= ~SUN50I_CTL_CPHA;
+		reg &= ~SUN50I_TFR_CTL_CPHA;
 
 	if (spi->mode & SPI_LSB_FIRST)
-		reg |= SUN50I_CTL_LMTF;
+		reg |= SUN50I_TFR_CTL_FBS;
 	else
-		reg &= ~SUN50I_CTL_LMTF;
-
+		reg &= ~SUN50I_TFR_CTL_FBS;
 
 	/*
 	 * If it's a TX only transfer, we don't want to fill the RX
 	 * FIFO with bogus data
 	 */
 	if (sspi->rx_buf)
-		reg &= ~SUN50I_CTL_DHB;
+		reg &= ~SUN50I_TFR_CTL_DHB;
 	else
-		reg |= SUN50I_CTL_DHB;
+		reg |= SUN50I_TFR_CTL_DHB;
 
-	sun50i_spi_write(sspi, SUN50I_CTL_REG, reg);
+	/* We want to control the chip select manually */
+	reg |= SUN50I_TFR_CTL_CS_MANUAL;
+
+	sun50i_spi_write(sspi, SUN50I_TFR_CTL_REG, reg);
 
 	/* Ensure that we have a parent clock fast enough */
 	mclk_rate = clk_get_rate(sspi->mclk);
@@ -281,7 +282,7 @@ static int sun50i_spi_transfer_one(struct spi_master *master,
 	 *
 	 * We have two choices there. Either we can use the clock
 	 * divide rate 1, which is calculated thanks to this formula:
-	 * SPI_CLK = MOD_CLK / (2 ^ (cdr + 1))
+	 * SPI_CLK = MOD_CLK / (2 ^ cdr)
 	 * Or we can use CDR2, which is calculated with the formula:
 	 * SPI_CLK = MOD_CLK / (2 * (cdr + 1))
 	 * Wether we use the former or the latter is set through the
@@ -310,24 +311,22 @@ static int sun50i_spi_transfer_one(struct spi_master *master,
 	/* Setup the counters */
 	sun50i_spi_write(sspi, SUN50I_BURST_CNT_REG, SUN50I_BURST_CNT(tfr->len));
 	sun50i_spi_write(sspi, SUN50I_XMIT_CNT_REG, SUN50I_XMIT_CNT(tx_len));
+	sun50i_spi_write(sspi, SUN50I_BURST_CTL_CNT_REG,
+			SUN50I_BURST_CTL_CNT_STC(tx_len));
 
-	/*
-	 * Fill the TX FIFO
-	 * Filling the FIFO fully causes timeout for some reason
-	 * at least on spi2 on A10s
-	 */
-	sun50i_spi_fill_fifo(sspi, SUN50I_FIFO_DEPTH - 1);
+	/* Fill the TX FIFO */
+	sun50i_spi_fill_fifo(sspi, sspi->fifo_depth);
 
 	/* Enable the interrupts */
+	sun50i_spi_write(sspi, SUN50I_INT_CTL_REG, SUN50I_INT_CTL_TC);
 	sun50i_spi_enable_interrupt(sspi, SUN50I_INT_CTL_TC |
-					 SUN50I_INT_CTL_RF_F34);
-	/* Only enable Tx FIFO interrupt if we really need it */
-	if (tx_len > SUN50I_FIFO_DEPTH)
-		sun50i_spi_enable_interrupt(sspi, SUN50I_INT_CTL_TF_E34);
+					 SUN50I_INT_CTL_RF_RDY);
+	if (tx_len > sspi->fifo_depth)
+		sun50i_spi_enable_interrupt(sspi, SUN50I_INT_CTL_TF_ERQ);
 
 	/* Start the transfer */
-	reg = sun50i_spi_read(sspi, SUN50I_CTL_REG);
-	sun50i_spi_write(sspi, SUN50I_CTL_REG, reg | SUN50I_CTL_XCH);
+	reg = sun50i_spi_read(sspi, SUN50I_TFR_CTL_REG);
+	sun50i_spi_write(sspi, SUN50I_TFR_CTL_REG, reg | SUN50I_TFR_CTL_XCH);
 
 	tx_time = max(tfr->len * 8 * 2 / (tfr->speed_hz / 1000), 100U);
 	start = jiffies;
@@ -343,7 +342,6 @@ static int sun50i_spi_transfer_one(struct spi_master *master,
 		goto out;
 	}
 
-
 out:
 	sun50i_spi_write(sspi, SUN50I_INT_CTL_REG, 0);
 
@@ -358,29 +356,29 @@ static irqreturn_t sun50i_spi_handler(int irq, void *dev_id)
 	/* Transfer complete */
 	if (status & SUN50I_INT_CTL_TC) {
 		sun50i_spi_write(sspi, SUN50I_INT_STA_REG, SUN50I_INT_CTL_TC);
-		sun50i_spi_drain_fifo(sspi, SUN50I_FIFO_DEPTH);
+		sun50i_spi_drain_fifo(sspi, sspi->fifo_depth);
 		complete(&sspi->done);
 		return IRQ_HANDLED;
 	}
 
 	/* Receive FIFO 3/4 full */
-	if (status & SUN50I_INT_CTL_RF_F34) {
-		sun50i_spi_drain_fifo(sspi, SUN50I_FIFO_DEPTH);
+	if (status & SUN50I_INT_CTL_RF_RDY) {
+		sun50i_spi_drain_fifo(sspi, SUN6I_FIFO_DEPTH);
 		/* Only clear the interrupt _after_ draining the FIFO */
-		sun50i_spi_write(sspi, SUN50I_INT_STA_REG, SUN50I_INT_CTL_RF_F34);
+		sun50i_spi_write(sspi, SUN50I_INT_STA_REG, SUN50I_INT_CTL_RF_RDY);
 		return IRQ_HANDLED;
 	}
 
 	/* Transmit FIFO 3/4 empty */
-	if (status & SUN50I_INT_CTL_TF_E34) {
-		sun50i_spi_fill_fifo(sspi, SUN50I_FIFO_DEPTH);
+	if (status & SUN50I_INT_CTL_TF_ERQ) {
+		sun50i_spi_fill_fifo(sspi, SUN6I_FIFO_DEPTH);
 
 		if (!sspi->len)
 			/* nothing left to transmit */
-			sun50i_spi_disable_interrupt(sspi, SUN50I_INT_CTL_TF_E34);
+			sun50i_spi_disable_interrupt(sspi, SUN50I_INT_CTL_TF_ERQ);
 
 		/* Only clear the interrupt _after_ re-seeding the FIFO */
-		sun50i_spi_write(sspi, SUN50I_INT_STA_REG, SUN50I_INT_CTL_TF_E34);
+		sun50i_spi_write(sspi, SUN50I_INT_STA_REG, SUN50I_INT_CTL_TF_ERQ);
 
 		return IRQ_HANDLED;
 	}
@@ -406,11 +404,19 @@ static int sun50i_spi_runtime_resume(struct device *dev)
 		goto err;
 	}
 
-	sun50i_spi_write(sspi, SUN50I_CTL_REG,
-			SUN50I_CTL_ENABLE | SUN50I_CTL_MASTER | SUN50I_CTL_TP);
+	ret = reset_control_deassert(sspi->rstc);
+	if (ret) {
+		dev_err(dev, "Couldn't deassert the device from reset\n");
+		goto err2;
+	}
+
+	sun50i_spi_write(sspi, SUN50I_GBL_CTL_REG,
+			SUN50I_GBL_CTL_BUS_ENABLE | SUN50I_GBL_CTL_MASTER | SUN50I_GBL_CTL_TP);
 
 	return 0;
 
+err2:
+	clk_disable_unprepare(sspi->mclk);
 err:
 	clk_disable_unprepare(sspi->hclk);
 out:
@@ -422,6 +428,7 @@ static int sun50i_spi_runtime_suspend(struct device *dev)
 	struct spi_master *master = dev_get_drvdata(dev);
 	struct sun50i_spi *sspi = spi_master_get_devdata(master);
 
+	reset_control_assert(sspi->rstc);
 	clk_disable_unprepare(sspi->mclk);
 	clk_disable_unprepare(sspi->hclk);
 
@@ -459,13 +466,15 @@ static int sun50i_spi_probe(struct platform_device *pdev)
 	}
 
 	ret = devm_request_irq(&pdev->dev, irq, sun50i_spi_handler,
-			       0, "sun4i-spi", sspi);
+			       0, "sun50i-spi", sspi);
 	if (ret) {
 		dev_err(&pdev->dev, "Cannot request IRQ\n");
 		goto err_free_master;
 	}
 
 	sspi->master = master;
+	sspi->fifo_depth = (unsigned long)of_device_get_match_data(&pdev->dev);
+
 	master->max_speed_hz = 100 * 1000 * 1000;
 	master->min_speed_hz = 3 * 1000;
 	master->set_cs = sun50i_spi_set_cs;
@@ -492,6 +501,13 @@ static int sun50i_spi_probe(struct platform_device *pdev)
 	}
 
 	init_completion(&sspi->done);
+
+	sspi->rstc = devm_reset_control_get_exclusive(&pdev->dev, NULL);
+	if (IS_ERR(sspi->rstc)) {
+		dev_err(&pdev->dev, "Couldn't get reset controller\n");
+		ret = PTR_ERR(sspi->rstc);
+		goto err_free_master;
+	}
 
 	/*
 	 * This wake-up/shutdown pattern is to be able to have the
@@ -531,7 +547,8 @@ static int sun50i_spi_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id sun50i_spi_match[] = {
-	{ .compatible = "allwinner, sun8i-h3-spi", },
+	{ .compatible = "allwinner,sun6i-a31-spi", .data = (void *)SUN6I_FIFO_DEPTH },
+	{ .compatible = "allwinner,sun8i-h3-spi",  .data = (void *)SUN8I_FIFO_DEPTH },
 	{}
 };
 MODULE_DEVICE_TABLE(of, sun50i_spi_match);

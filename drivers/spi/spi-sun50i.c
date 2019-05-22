@@ -352,7 +352,7 @@ static int sun50i_spi_transfer_one(struct spi_master *master, struct spi_device 
 	sun50i_spi_write(sspi, SUN50I_CLK_CTL_REG, reg);
 
 
-	/*5、开始传输数据*/
+	/*5、配置中断，初步发送数据*/
 	/* Setup the transfer now... */
 	if (sspi->tx_buf)
 		tx_len = tfr->len;
@@ -374,12 +374,12 @@ static int sun50i_spi_transfer_one(struct spi_master *master, struct spi_device 
 	sun50i_spi_enable_interrupt(sspi, SUN50I_INT_CTL_TC |
 					 SUN50I_INT_CTL_RF_RDY);
 
-	/*如果需要发送的数据一次发送不完，使能RX FIFO Empty Request中断*/
+	/*如果需要发送的数据在调用sun50i_spi_fill_fifo一次发送不完，使能RX FIFO Empty Request中断，通过中断发送剩下的数据*/
 	if (tx_len > sspi->fifo_depth)
 		sun50i_spi_enable_interrupt(sspi, SUN50I_INT_CTL_TF_ERQ);
 
 	/* Start the transfer */
-	/*开始传输*/
+	/*6、开始传输*/
 	reg = sun50i_spi_read(sspi, SUN50I_TFR_CTL_REG);
 	/*使能SPI脉冲，开始数据传输*/
 	sun50i_spi_write(sspi, SUN50I_TFR_CTL_REG, reg | SUN50I_TFR_CTL_XCH);
@@ -575,7 +575,7 @@ static int sun50i_spi_probe(struct platform_device *pdev)
 		goto err_free_master;
 	}
 
-	/*5、时钟初始化*/
+	/*5、获取时钟*/
 	/*在设备树sun50i-a64.dtsi中spi0定义了:
 	 clocks = <&ccu CLK_BUS_SPI0>, <&ccu CLK_SPI0>;
 	 clock-names = "ahb", "mod";
@@ -606,6 +606,8 @@ static int sun50i_spi_probe(struct platform_device *pdev)
 
 	/*7、硬件初始化（忽略）*/
 
+
+	/*8、复位控制器和电源管理初始化*/
 	/*获取复位控制寄存器，设备树spi0配置中有：resets = <&ccu RST_BUS_SPI0>;没有配置reset-names 所以第二个参数为空*/
 	sspi->rstc = devm_reset_control_get_exclusive(&pdev->dev, NULL);
 	if (IS_ERR(sspi->rstc)) {
@@ -626,7 +628,7 @@ static int sun50i_spi_probe(struct platform_device *pdev)
 	pm_runtime_idle(&pdev->dev);
 
 
-	/*8、注册spi_master，将spi_master注册进链表，同时扫描设备树在spi总线下创建spidev*/
+	/*9、注册spi_master，将spi_master注册进链表，同时扫描设备树在spi总线下创建spidev*/
 	ret = devm_spi_register_master(&pdev->dev, master);
 	if (ret) {
 		dev_err(&pdev->dev, "cannot register SPI master\n");

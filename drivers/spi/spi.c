@@ -2006,26 +2006,40 @@ extern struct class spi_slave_class;	/* dummy */
 struct spi_controller *__spi_alloc_controller(struct device *dev,
 					      unsigned int size, bool slave)
 {
+	/*struct spi_master实际上是struct spi_controller，在spi.h中有定义#define spi_master			spi_controller*/
 	struct spi_controller	*ctlr;
 
 	if (!dev)
 		return NULL;
 
+	/*spi-sun50i.c调用的spi_alloc_master(&pdev->dev, sizeof(struct sun50i_spi));实际来到这里，
+	 kzalloc(size + sizeof(*ctlr), GFP_KERNEL)分配了struct sun50i_spi + struct spi_master的空间
+	*/
 	ctlr = kzalloc(size + sizeof(*ctlr), GFP_KERNEL);
 	if (!ctlr)
 		return NULL;
 
+	/*对struct spi_master的dev成员进行初始化*/
 	device_initialize(&ctlr->dev);
+
+	/*初始化struct spi_master的总线设备号，片选*/
 	ctlr->bus_num = -1;
 	ctlr->num_chipselect = 1;
 	ctlr->slave = slave;
+
+	/*初始化struct spi_master主从设备类型*/
 	if (IS_ENABLED(CONFIG_SPI_SLAVE) && slave)
 		ctlr->dev.class = &spi_slave_class;
 	else
 		ctlr->dev.class = &spi_master_class;
+
+	/*初始化struct spi_master的dev.parent是pdev->dev*/
 	ctlr->dev.parent = dev;
 	pm_suspend_ignore_children(&ctlr->dev, true);
-	spi_controller_set_devdata(ctlr, &ctlr[1]);
+
+	/*将分配好内存空间的struct sun50i_spi指针设置到spi_master->dev->driver_data*/
+	/*参数为什么是&ctlr[1]？分配的总内存空间去掉struct spi_master占用的，其他空间给struct sun50i_spi就从&ctlr[1]开始*/
+	spi_controller_set_devdata(ctlr, &ctlr[1]); 	
 
 	return ctlr;
 }

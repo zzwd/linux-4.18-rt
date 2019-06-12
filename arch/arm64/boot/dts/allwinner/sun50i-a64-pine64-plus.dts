@@ -82,7 +82,8 @@
         status = "okay";
 
         spidev@0 {
-        compatible = "sunxi,spimodem";
+		#compatible = "spidev";
+                compatible = "sunxi,spimodem";
 		reg = <0x0>;
 		spi-max-frequency = <0x2faf080>;
         };
@@ -94,14 +95,20 @@
         status = "okay";
 
         spidev@1 {
-        compatible = "sunxi,spimodem";
+		#compatible = "spidev";
+                compatible = "sunxi,spimodem";
 		reg = <0x0>;
 		spi-max-frequency = <0x2faf080>;
         };
 };
 
 
-
+/* On Wifi/BT connector, with RTS/CTS */
+&uart1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart1_pins>, <&uart1_rts_cts_pins>;
+	status = "okay";
+};
 
 
 
